@@ -13,6 +13,9 @@ from joblib import Parallel, delayed
 from sympy import Symbol, integrate, lambdify, exp, Max, Min, Piecewise, log
 import pprint
 
+import warnings
+warnings.filterwarnings("ignore")
+
 from lib.priorityqueue import PriorityQueue
 from lib.measures import *
 
@@ -41,6 +44,7 @@ class DiseaseModel(object):
         # cache settings
         self.mob = mob
         self.d = distributions
+        #print("MOB", self.mob.delta, "--- DISTR", self.d.delta)
         assert(np.allclose(np.array(self.d.delta), np.array(self.mob.delta), atol=1e-3))
 
         # parse distributions object
@@ -213,7 +217,7 @@ class DiseaseModel(object):
                     self.bernoulli_is_iasy[i] = 0
 
                     # no exposures added due to heuristic `expo` seeds using reproductive rate
-                    self.__process_presymptomatic_event(0.0, i, add_exposures=False)
+                    self.__process_presymptomatic_event(0.0, i, False, add_exposures=False)
 
 
                 # initial asymptomatic
@@ -228,7 +232,7 @@ class DiseaseModel(object):
                     self.bernoulli_is_iasy[i] = 1
 
                     # no exposures added due to heuristic `expo` seeds using reproductive rate
-                    self.__process_asymptomatic_event(0.0, i, add_exposures=False)
+                    self.__process_asymptomatic_event(0.0, i, False, add_exposures=False)
 
                 # initial symptomatic
                 elif state == 'isym' or state == 'isym_notposi':
@@ -409,25 +413,30 @@ class DiseaseModel(object):
             * np.sum(self.site_type == k) / self.n_sites # relative frequency of site type k
             for k in range(self.num_site_types)
         ])
-
+        
+        ''' SLIM
         # if specified, scale optimized betas a priori
         apriori_beta = self.measure_list.find_first(APrioriBetaMultiplierMeasureByType)
         if apriori_beta:
             for k in range(self.num_site_types):
                 self.betas[self.site_dict[k]] *= apriori_beta.beta_factor(typ=self.site_dict[k])
-
+        '''
         # init state variables with seeds
         self.__init_run()
         self.was_initial_seed = np.zeros(self.n_people, dtype='bool')
 
+        
+        self.initial_seeds = initial_counts
+        '''
         total_seeds = sum(v for v in initial_counts.values())
         initial_people = np.random.choice(self.n_people, size=total_seeds, replace=False)
         ptr = 0
-        self.initial_seeds = dict()
+        
         for k, v in initial_counts.items():
             self.initial_seeds[k] = initial_people[ptr:ptr + v].tolist()
             ptr += v
-
+        '''
+        
         # sample all iid events ahead of time in batch
         batch_size = (self.n_people, )
         self.delta_expo_to_ipre = self.d.sample_expo_ipre(size=batch_size)
@@ -461,12 +470,12 @@ class DiseaseModel(object):
     def run_one_step_dyn(self, max_time, excluded):
 
         # MAIN EVENT LOOP
-        t = self.t0
+        #t = self.t0
         while self.queue:
-
+            
             # get next event to process
             t, event, i, infector, k, metadata = self.queue.pop()
-
+            #print(event, i, t)
 
             # check termination
             if t > max_time:
@@ -483,6 +492,7 @@ class DiseaseModel(object):
 
             # process event
             if event == 'expo':
+                #print("Entered EXPO")
                 i_susceptible = ((not self.state['expo'][i]) and (self.state['susc'][i]))
 
                 # base rate exposure    SLIM : ~ PAUTOINF
@@ -510,7 +520,7 @@ class DiseaseModel(object):
                     for v in infector_visits:
                         infector_away_from_home = \
                             ((v.t_to > t) and # infector actually at a site, not just matching "environmental contact"
-                             (not self.is_person_home_from_visit_due_to_measure(
+                             (not self.is_person_home_from_visit_due_to_measure(excluded[infector],
                              t=t, i=infector, visit_id=v.id, site_type=self.site_dict[self.site_type[v.site]])))
                         if infector_away_from_home:
                             break
@@ -518,7 +528,7 @@ class DiseaseModel(object):
                     for v in i_visits:
                         i_away_from_home = i_away_from_home or \
                             ((v.t_to > t) and # i actually at a site, not just matching "environmental contact"
-                             (not self.is_person_home_from_visit_due_to_measure(
+                             (not self.is_person_home_from_visit_due_to_measure(excluded[infector],
                              t=t, i=i, visit_id=v.id, site_type=self.site_dict[self.site_type[v.site]])))
 
                     away_from_home = (infector_away_from_home or i_away_from_home)
@@ -599,6 +609,7 @@ class DiseaseModel(object):
 
                 # contact exposure
                 if (infector is not None) and i_susceptible and k >= 0:
+                    #print("Entered infector")
 
                     # for contact exposures, `contact` causing the exposure is passed
                     contact = metadata
@@ -628,8 +639,10 @@ class DiseaseModel(object):
 
                     # 4) check whether infectiousness got reduced due to site specific
                     #    measures and as a consequence this event didn't occur
-                    rejection_prob = self.reject_exposure_due_to_measure(t=t, k=k)
-                    site_avoided_infection = (np.random.uniform() < rejection_prob)
+                    ## SLIM
+                    #rejection_prob = self.reject_exposure_due_to_measure(t=t, k=k)
+                    #site_avoided_infection = (np.random.uniform() < rejection_prob)
+                    site_avoided_infection = False
 
                     # "thinning"
                     # if none of 1), 2), 3), 4) are true, the event is valid
@@ -660,9 +673,11 @@ class DiseaseModel(object):
                                 t=t, infector=infector, j=i, base_rate=base_rate_infector, tmax=tmax)
 
             elif event == 'ipre':
+                #print("entered IPRE", i)
                 self.__process_presymptomatic_event(t, i, excluded[i])
 
             elif event == 'iasy':
+                #print("entered IASY", i)
                 self.__process_asymptomatic_event(t, i, excluded[i])
 
             elif event == 'isym':
@@ -672,7 +687,9 @@ class DiseaseModel(object):
                 self.__process_resistant_event(t, i)
 
             elif event == 'test':
-                self.__process_testing_event(t, i, metadata)
+                pass
+                #print("ENTERED IN TEST", i)
+                #self.__process_testing_event(t, i, metadata)
 
             elif event == 'dead':
                 self.__process_fatal_event(t, i)
@@ -922,6 +939,7 @@ class DiseaseModel(object):
                 self.delta_isym_to_resi[i])
 
             if not i_excluded:
+                #print("entered i_excluded in process_presym")
                 # contact exposure of others
                 self.__push_contact_exposure_events(t=t, infector=i, base_rate=1.0, tmax=tmax)
 
@@ -929,7 +947,7 @@ class DiseaseModel(object):
             if self.households is not None and self.beta_household > 0:
                 self.__push_household_exposure_events(t=t, infector=i, base_rate=1.0, tmax=tmax)
 
-    def __process_symptomatic_event(self, t, i, apply_for_test=True):
+    def __process_symptomatic_event(self, t, i, apply_for_test=False): #False by Giova
         """
         Mark person `i` as symptomatic at time `t`
         Push resistant queue event
@@ -943,8 +961,9 @@ class DiseaseModel(object):
         self.state_started_at['isym'][i] = t
 
         # testing
-        if self.test_targets == 'isym' and apply_for_test:
-            self.__apply_for_testing(t=t, i=i, priority= -self.max_time + t, trigger_tracing_if_positive=True)
+        # SLIM
+        #if self.test_targets == 'isym' and apply_for_test:
+        #    self.__apply_for_testing(t=t, i=i, priority= -self.max_time + t, trigger_tracing_if_positive=True)
 
         # hospitalized?
         if self.bernoulli_is_hospi[i]:
@@ -1075,8 +1094,11 @@ class DiseaseModel(object):
                 valid_contacts.add(contact.indiv_i)
 
         # generate potential exposure event for `j` from contact with `infector`
+        count = 0
         for j in valid_contacts:
+            count += 1
             self.__push_contact_exposure_infector_to_j(t=t, infector=infector, j=j, base_rate=base_rate, tmax=tmax)
+        #print("valid contacts of", infector, count)
 
 
     def __push_contact_exposure_infector_to_j(self, *, t, infector, j, base_rate, tmax):
@@ -1192,6 +1214,7 @@ class DiseaseModel(object):
         """
 
         lambda_household = self.beta_household * base_rate * self.__kernel_term(- self.delta, 0.0, 0.0)
+        #print("lambda house of ",infector, lambda_household)
         tau = t + np.random.exponential(scale=1.0 / lambda_household)
 
         # site = -1 means it is a household infection
@@ -1229,12 +1252,13 @@ class DiseaseModel(object):
         rejection_prob = 1.0 - acceptance_prob
         return rejection_prob
 
-    def is_person_home_from_visit_due_to_measure(self, t, i, visit_id, site_type):
+    def is_person_home_from_visit_due_to_measure(self, i_excluded, t, i, visit_id, site_type):
         '''
         Returns True/False of whether person i stayed at home from visit
         `visit_id` due to any measures
         '''
-
+        is_home = i_excluded
+        ''' SLIM
         is_home = (
             self.measure_list.is_contained(
                 SocialDistancingForAllMeasure, t=t,
@@ -1271,6 +1295,7 @@ class DiseaseModel(object):
                 UpperBoundCasesSocialDistancing, t=t,
                 j=i, j_visit_id=visit_id, t_pos_tests=self.t_pos_tests)
         )
+        '''
         return is_home
 
 

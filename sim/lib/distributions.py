@@ -68,8 +68,10 @@ class CovidDistributions(object):
         self.gamma = np.log(2.0) / self.real_site_aerosol_halflife
 
         # 0.3654120904376099
-        self.delta = np.log(1 / 0.10) / self.gamma # time of intensity decrease to below 10 %
-        # self.delta = np.log(1 / 0.20) / self.gamma 
+        #self.delta = np.log(1 / 0.10) / self.gamma # time of intensity decrease to below 10 %
+        #self.delta = 0.0
+        self.delta = np.log(1 / 0.20) / self.gamma 
+        
        
         # Incubation period: estimated mean is 5.52 days, std dev is 2.41 days
         # To be able to approx. represent latent and infectious incubation period separately,
