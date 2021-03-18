@@ -1,5 +1,6 @@
 # Quantifying the Effects of Contact Tracing, Testing, and Containment Measures in the Presence of Infection Hotspots
 
+
 This repository contains the code base to run the sampling algorithm of a high-resolution spatiotemporal epidemic model at large scale, which can be used to predict and analyze the spread of epidemics such as COVID-19 in any real-world city and region. Different testing & tracing strategies, social distancing measures and business restrictions can be employed, amended, and extended arbitrarily in a modular fashion. Details about the relevant theory and methods can be found in our [paper](https://arxiv.org/abs/2004.07641).
 
 For the code used to generate the experimental results complementing the [PanCast](https://arxiv.org/abs/2011.08069) white paper refer to this [branch](https://github.com/covid19-model/simulator/tree/beacon).
