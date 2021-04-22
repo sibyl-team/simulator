@@ -1,3 +1,6 @@
+import time
+
+
 import sys, os
 if '..' not in sys.path:
     sys.path.append('..')
@@ -156,7 +159,8 @@ class Experiment(object):
         cpu_count=None,
         multi_beta_calibration=False,
         condensed_summary=False,
-        continued_run=False):
+        continued_run=False,
+        ranker=None):
 
         self.experiment_info = experiment_info
         self.start_date = start_date
@@ -168,13 +172,16 @@ class Experiment(object):
         self.condensed_summary = condensed_summary
         self.continued_run = continued_run
         self.verbose = verbose
+        
+        self.ranker = ranker
 
         # list simulations of experiment
         self.sims = []
 
     def get_sim_path(self, sim):
-        version_tag = get_version_tag()
-        return sim.experiment_info + '-' + version_tag + '/' + sim.experiment_info + '-' + sim.simulation_info
+        #version_tag = get_version_tag()
+        version_tag = ''
+        return sim.experiment_info + version_tag + '/' + sim.experiment_info + '-' + sim.simulation_info
 
     def save_condensed_summary(self, sim, summary):
         filepath = os.path.join('condensed_summaries', self.get_sim_path(sim) + '_condensed.pk')
@@ -393,8 +400,8 @@ class Experiment(object):
 
         '''
         Runs all simulations that were provided via the `add` method and stored in `self.sims`
-        '''
-
+        '''    
+        
         # generate experiment folder
         current_directory = os.getcwd()
         directory = os.path.join(current_directory, ROOT, self.experiment_info)        
@@ -406,10 +413,13 @@ class Experiment(object):
 
             with open(sim.mob_settings_file, 'rb') as fp:
                 mob_settings = pickle.load(fp)
-        
+            
+            print('Starting launch_parallel_simulations')
+            
             summary = launch_parallel_simulations(
                 mob_settings=sim.mob_settings_file,
                 distributions=sim.distributions,
+                ranker=self.ranker,
                 random_repeats=sim.random_repeats,
                 cpu_count=self.cpu_count,
                 params=sim.model_params,

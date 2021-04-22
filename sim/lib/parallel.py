@@ -1,4 +1,3 @@
-
 import time
 import bisect
 import copy
@@ -23,6 +22,7 @@ from lib.measures import (MeasureList, BetaMultiplierMeasureBySite,
 
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from lib.mobilitysim import MobilitySimulator
+
 
 TO_HOURS = 24.0
 
@@ -136,14 +136,21 @@ def create_ParallelSummary_from_DiseaseModel(sim, store_mob=False):
     return summary
 
 
-def pp_launch(r, kwargs, distributions, params, initial_counts, testing_params, measure_list, max_time,
+def pp_launch(r, kwargs, distributions, ranker, params, initial_counts, testing_params, measure_list, max_time,
               thresholds_roc, store_mob, store_measure_bernoullis):
-
+    
+    print('Inside pp_launch')
+    
     mob = MobilitySimulator(**kwargs)
+    
+    print('Simulating mobility')
     mob.simulate(max_time=max_time)
+    print('Mobility simulation ended')
 
-    sim = DiseaseModel(mob, distributions)
-
+    sim = DiseaseModel(mob, distributions, ranker)
+    
+    print('Launching epidemic')
+    
     sim.launch_epidemic(
         params=params,
         initial_counts=initial_counts,
@@ -173,7 +180,7 @@ def pp_launch(r, kwargs, distributions, params, initial_counts, testing_params, 
     return result
 
 
-def launch_parallel_simulations(mob_settings, distributions, random_repeats, cpu_count, params, 
+def launch_parallel_simulations(mob_settings, distributions, ranker, random_repeats, cpu_count, params, 
     initial_seeds, testing_params, measure_list, max_time, num_people, num_sites, site_loc, home_loc,
     beacon_config=None, thresholds_roc=None, verbose=True, synthetic=False, summary_options=None,
     store_mob=False, store_measure_bernoullis=False):
@@ -183,9 +190,12 @@ def launch_parallel_simulations(mob_settings, distributions, random_repeats, cpu
 
         # test-time mobility simulator additions and modifications
         kwargs['beacon_config'] = beacon_config
+        
+        kwargs['delta'] = 0.36541
 
     mob_setting_list = [copy.deepcopy(kwargs) for _ in range(random_repeats)]
     distributions_list = [copy.deepcopy(distributions) for _ in range(random_repeats)]
+    ranker_list = [copy.copy(ranker) for _ in range(random_repeats)]
     measure_list_list = [copy.deepcopy(measure_list) for _ in range(random_repeats)]
     params_list = [copy.deepcopy(params) for _ in range(random_repeats)]
     initial_seeds_list = [copy.deepcopy(initial_seeds) for _ in range(random_repeats)]
@@ -198,19 +208,25 @@ def launch_parallel_simulations(mob_settings, distributions, random_repeats, cpu
 
     if verbose:
         print('Launching simulations...')
+        
+    print('Starting pp_launch')
+    
+    cpu_count = min(cpu_count, len(repeat_ids))
+    
+    print('cpu_count:',cpu_count)
+    print('repeat_ids:',repeat_ids)
 
-    with ProcessPoolExecutor(cpu_count) as ex:
-        res = ex.map(pp_launch, repeat_ids, mob_setting_list, distributions_list, params_list,
-                     initial_seeds_list, testing_params_list, measure_list_list, max_time_list,
-                     thresholds_roc_list, store_mob_list, store_measure_bernoullis_list)
+#     with ProcessPoolExecutor(cpu_count) as ex:
+#        res = ex.map(pp_launch, repeat_ids, mob_setting_list, distributions_list, ranker_list, params_list,
+#                     initial_seeds_list, testing_params_list, measure_list_list, max_time_list,
+#                     thresholds_roc_list, store_mob_list, store_measure_bernoullis_list, timeout=30)
 
-    # # # DEBUG mode (to see errors printed properly)
-    # res = []
-    # for r in repeat_ids:
-    #     res.append(pp_launch(r, mob_setting_list[r], distributions_list[r], params_list[r],
-    #                  initial_seeds_list[r], testing_params_list[r], measure_list_list[r], 
-    #                  max_time_list[r], thresholds_roc_list[r], store_mob_list[r], store_measure_bernoullis_list[r]))
-
+    # DEBUG mode (to see errors printed properly)
+    res = []
+    for r in repeat_ids:
+        res.append(pp_launch(r, mob_setting_list[r], distributions_list[r], ranker_list[r], params_list[r],
+                    initial_seeds_list[r], testing_params_list[r], measure_list_list[r], 
+                    max_time_list[r], thresholds_roc_list[r], store_mob_list[r], store_measure_bernoullis_list[r]))
     
     # collect all result (the fact that mob is still available here is due to the for loop)
     summary = ParallelSummary(max_time, random_repeats, num_people, num_sites, site_loc, home_loc, thresholds_roc)

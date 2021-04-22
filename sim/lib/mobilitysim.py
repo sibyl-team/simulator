@@ -176,7 +176,6 @@ def _simulate_synthetic_mobility_traces(*, num_people, num_sites, max_time, home
     data, visit_counts = list(), list()
 
     for i in range(num_people):
-
         # use mobility rates of specific age group
         mob_rate_per_type = mob_rate_per_age_per_type[people_age[i]]
         data_i = _simulate_individual_synthetic_trace(
@@ -202,7 +201,7 @@ def _simulate_real_mobility_traces(*, num_people, max_time, site_type, people_ag
     np.random.seed(seed-1)
     data, visit_counts = list(), list()
 
-    for i in range(num_people):
+    for i in range(num_people):        
         # use mobility rates of specific age group
         mob_rate_per_type = mob_rate_per_age_per_type[people_age[i]]
         # use site distances from specific tiles
@@ -311,8 +310,10 @@ class MobilitySimulator:
             Daily testing capacity per 100k people
         region_population : int
             Number of people living in entire area/region
-        downsample : int
-            Downsampling factor chosen for real town population and sites
+        downsample_pop : int
+            Downsampling factor chosen for real town population
+        downsample_sites : int
+            Downsampling factor chosen for real town sites
         mob_rate_per_age_per_type: list of list of float
             Mean number of visits per time unit.
             Rows correspond to age groups, columns correspond to site types.
@@ -342,19 +343,23 @@ class MobilitySimulator:
         verbose : bool (optional, default: False)
             Verbosity level
         """
+        
+        #TEMPORARY
+        downsample_pop = downsample
+        downsample_sites = downsample
 
         # Set random seed for reproducibility
         seed = seed or rd.randint(0, 2**32 - 1)
         rd.seed(seed)
         np.random.seed(seed-1)
-        
+
         synthetic = (num_people is not None and num_sites is not None and mob_rate_per_type is not None and
                     dur_mean is not None and num_age_groups is not None)
 
         real = (home_loc is not None and people_age is not None and site_loc is not None and site_type is not None and
                 daily_tests_unscaled is not None and num_people_unscaled is not None and region_population is not None and
                 mob_rate_per_age_per_type is not None and dur_mean_per_type is not None and home_tile is not None and
-                tile_site_dist is not None and variety_per_type is not None and downsample is not None)
+                tile_site_dist is not None and variety_per_type is not None and downsample_pop is not None and downsample_sites is not None)
 
         assert (synthetic != real), 'Unable to decide on real or synthetic mobility generation based on given arguments'
 
@@ -363,12 +368,13 @@ class MobilitySimulator:
             self.mode = 'synthetic'
 
             self.region_population = None
-            self.downsample = None
+            self.downsample_pop = None
+            self.downsample_sites = None
             self.num_people = num_people
             self.num_people_unscaled = None
             # Random geographical assignment of people's home on 2D grid
             self.home_loc = np.random.uniform(0.0, 1.0, size=(self.num_people, 2))
-            
+
             # Age-group of individuals
             self.people_age = np.random.randint(low=0, high=num_age_groups,
                                                 size=self.num_people, dtype=int)
@@ -379,21 +385,21 @@ class MobilitySimulator:
             self.num_sites = num_sites
             # Random geographical assignment of sites on 2D grid
             self.site_loc = np.random.uniform(0.0, 1.0, size=(self.num_sites, 2))
-            
+
             # common mobility rate for all age groups
             self.mob_rate_per_age_per_type = np.tile(mob_rate_per_type,(num_age_groups,1))
             self.num_age_groups = num_age_groups
             self.num_site_types = len(mob_rate_per_type)
             # common duration for all types
             self.dur_mean_per_type = np.array(self.num_site_types*[dur_mean])
-            
+
             # Random type for each site
             site_type_prob = np.ones(self.num_site_types)/self.num_site_types
             self.site_type = np.random.multinomial(
                 n=1, pvals=site_type_prob, size=self.num_sites).argmax(axis=1)
-            
+
             self.variety_per_type = None
-            
+
             self.home_tile=None
             self.tile_site_dist=None
 
@@ -401,17 +407,18 @@ class MobilitySimulator:
 
             self.mode = 'real'
 
-            self.downsample = downsample
+            self.downsample_pop = downsample_pop
+            self.downsample_sites = downsample_sites
             self.region_population = region_population
             self.num_people_unscaled = num_people_unscaled
             self.num_people = len(home_loc)
             self.home_loc = np.array(home_loc)
 
             self.people_age = np.array(people_age)
-            
+
             if people_household is not None:
                 self.people_household = np.array(people_household)
-            
+
                 # create dict of households, to retreive household members in O(1) during household infections
                 self.households = {}
                 for i in range(self.num_people):
@@ -432,7 +439,7 @@ class MobilitySimulator:
             self.num_age_groups = self.mob_rate_per_age_per_type.shape[0]
             self.num_site_types = self.mob_rate_per_age_per_type.shape[1]
             self.dur_mean_per_type = np.array(dur_mean_per_type)
-            
+
             self.site_type = np.array(site_type)
 
             self.variety_per_type=np.array(variety_per_type)
@@ -482,10 +489,10 @@ class MobilitySimulator:
 
         if beacon_config is None:
             return np.zeros(self.num_sites, dtype=bool)
-        
+
         elif beacon_config['mode'] == 'all':
             return np.ones(self.num_sites, dtype=bool)
-        
+
         elif beacon_config['mode'] == 'random':
             # extract mode specific information
             proportion_with_beacon = beacon_config['proportion_with_beacon']
@@ -496,8 +503,8 @@ class MobilitySimulator:
             site_has_beacon = np.zeros(self.num_sites, dtype=bool)
             site_has_beacon[perm[:int(proportion_with_beacon * self.num_sites)]] = True
 
-            return site_has_beacon      
-            
+            return site_has_beacon
+
         elif beacon_config['mode'] == 'visit_freq':
             # extract mode specific information
             proportion_with_beacon = beacon_config['proportion_with_beacon']
@@ -514,7 +521,7 @@ class MobilitySimulator:
                 if site_priority[k] > max(site_priority) * (1 - proportion_with_beacon):
                     site_has_beacon[k] = True
             return site_has_beacon
-        
+
         else:
             raise ValueError('Invalid `beacon_config` mode.')
 
@@ -664,6 +671,9 @@ class MobilitySimulator:
                 tile_site_dist=self.tile_site_dist,
                 seed=rd.randint(0, 2**32 - 1)
                 )
+        
+        print('Min duration with delta:', np.min([(a.t_to_shifted - a.t_from) for a in all_mob_traces]))
+        print('Max duration with delta:', np.max([(a.t_to_shifted - a.t_from) for a in all_mob_traces]))
 
         return all_mob_traces
 
@@ -767,7 +777,7 @@ class MobilitySimulator:
             mob_traces_dict[v.site].update([v])
         return mob_traces_dict
 
-    def simulate(self, max_time, seed=None): 
+    def simulate(self, max_time, seed=None):
         """
         Simulate contacts between individuals in time window [0, max_time].
 
@@ -807,15 +817,15 @@ class MobilitySimulator:
         """Return a generator of Intervals of all visits of `indiv` is at site
            `site` that overlap with [t0, t1]
 
-        The call 
+        The call
 
             self.mob_traces_by_indiv[indiv].find((t0, t1))
 
         matches all visits on visit window [`t_from`, `t_to_shifted`].
-        Since we only want to return real in-person visits, 
+        Since we only want to return real in-person visits,
         we need to filter out matches such that `t_to` < `t0` and were only happening
-        in the sense of "environemental contamination" 
-        i.e. only matched on (`t_to`, `t_to_shifted`] 
+        in the sense of "environemental contamination"
+        i.e. only matched on (`t_to`, `t_to_shifted`]
         """
         for visit in self.mob_traces_by_indiv[indiv].find((t0, t1)):
             if visit.t_to >= t0 and visit.site == site:

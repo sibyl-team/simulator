@@ -116,8 +116,8 @@ calibration_lockdown_dates = {
 # mobs settings path;
 calibration_mob_paths = {
     'GER': {
-        #'TU': ['lib/mobility/Tubingen_settings_10.pk', 'lib/mobility/Tubingen_settings_1.pk'],
-        'TU': ['lib/mobility/Tubingen_settings_10_beacon.pk', 'lib/mobility/Tubingen_settings_1_beacon.pk'],
+        'TU': ['lib/mobility/Tubingen_settings_10.pk', 'lib/mobility/Tubingen_settings_1.pk'],
+        #'TU': ['lib/mobility/Tubingen_settings_10_beacon.pk', 'lib/mobility/Tubingen_settings_1_beacon.pk'],
         'KL': ['lib/mobility/Kaiserslautern_settings_10.pk', 'lib/mobility/Kaiserslautern_settings_1.pk'],
         'RH': ['lib/mobility/Ruedesheim_settings_10.pk', 'lib/mobility/Ruedesheim_settings_1.pk'],
         'TR': ['lib/mobility/Tirschenreuth_settings_5.pk', 'lib/mobility/Tirschenreuth_settings_1.pk'],

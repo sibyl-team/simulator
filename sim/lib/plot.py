@@ -192,7 +192,7 @@ NEURIPS_RCPARAMS = {
     # Font
     "text.usetex": True,                # use LaTeX to write all text
     "font.family": "serif",             # use serif rather than sans-serif
-    "font.serif": "Times New Roman",    # use "Times New Roman" as the standard font
+    #"font.serif": "Times New Roman",    # use "Times New Roman" as the standard font
     "font.size": 8.5,
     "axes.titlesize": 8.5,                # LaTeX default is 10pt font.
     "axes.labelsize": 8.5,                # LaTeX default is 10pt font.
@@ -211,7 +211,7 @@ NEURIPS_RCPARAMS = {
     "pgf.preamble": [
         r'\usepackage{fontspec}',
         r'\usepackage{unicode-math}',
-        r'\setmainfont{Times New Roman}',
+        #r'\setmainfont{Times New Roman}',
     ],
 }
 

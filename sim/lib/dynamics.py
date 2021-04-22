@@ -1,4 +1,3 @@
-
 import time
 import bisect
 import numpy as np
@@ -25,7 +24,7 @@ class DiseaseModel(object):
     assumed to be in units of days as usual in epidemiology
     """
 
-    def __init__(self, mob, distributions):
+    def __init__(self, mob, distributions, inference_algo):
         """
         Init simulation object with parameters
 
@@ -40,6 +39,9 @@ class DiseaseModel(object):
         self.mob = mob
         self.d = distributions
         assert(np.allclose(np.array(self.d.delta), np.array(self.mob.delta), atol=1e-3))
+        
+        # inference algorithm
+        self.inference_algo = inference_algo
 
         # parse distributions object
         self.lambda_0 = self.d.lambda_0
@@ -47,6 +49,8 @@ class DiseaseModel(object):
         self.fatality_rates_by_age = self.d.fatality_rates_by_age
         self.p_hospital_by_age = self.d.p_hospital_by_age
         self.delta = self.d.delta
+        
+        print('Using delta:', self.delta)
 
         # parse mobility object
         self.n_people = mob.num_people
@@ -174,9 +178,24 @@ class DiseaseModel(object):
         self.contact_caused_expo = [None for i in range(self.n_people)]
         # list of tuples (i, contacts) where `contacts` were valid when `i` got tested positive
         self.valid_contacts_for_tracing = []
+        
         # evaluates an integral of the exposure rate 
         self.exposure_integral = self.make_exposure_int_eval()
+        
         self.exposure_rate = self.make_exposure_rate_eval() # for sanity check
+        
+        # record all test results
+        self.all_obs = {}
+        
+        # count indirect infections
+        self.tot_inf_num = 0
+        self.inf_num = 0
+        self.indir_inf_num = 0
+        self.full_indir_inf_num = 0
+        
+        # initialize inference algorithm
+        print('Initializing inference algorithm')
+        self.inference_algo.init(self.n_people, int((self.max_time // TO_HOURS) + 1))
 
         # DEBUG
         self.risk_got_exposed = np.zeros(11)
@@ -507,7 +526,7 @@ class DiseaseModel(object):
                                    n_people=self.n_people)
 
         self.measure_list.init_run(SocialDistancingForKGroups)
-
+        
         # Store the original beta values
         self.betas_weighted_mean = sum([
             self.betas[self.site_dict[k]]
@@ -520,7 +539,7 @@ class DiseaseModel(object):
         if apriori_beta:
             for k in range(self.num_site_types):
                 self.betas[self.site_dict[k]] *= apriori_beta.beta_factor(typ=self.site_dict[k])
-
+        
         # init state variables with seeds
         self.__init_run()
         self.was_initial_seed = np.zeros(self.n_people, dtype='bool')
@@ -532,7 +551,7 @@ class DiseaseModel(object):
         for k, v in initial_counts.items():
             self.initial_seeds[k] = initial_people[ptr:ptr + v].tolist()
             ptr += v          
-
+        
         # sample all iid events ahead of time in batch
         batch_size = (self.n_people, )
         self.delta_expo_to_ipre = self.d.sample_expo_ipre(size=batch_size)
@@ -565,9 +584,18 @@ class DiseaseModel(object):
         for h in range(1, math.floor(self.max_time / self.testing_frequency)):
             ht = h * self.testing_frequency
             self.queue.push((ht, 'execute_tests', None, None, None, None), priority=ht)
+        
+        # initialize contact tracing events: add 'update_test' event to queue
+        # !! VALUES STILL HARDCODED !!
+        if ('isolate' in self.smart_tracing_actions and self.smart_tracing_policy_isolate == 'sib') or \
+               ('test' in self.smart_tracing_actions and self.smart_tracing_policy_test == 'sib'):
+            for h in range(5, math.floor(self.max_time / (1.0 * TO_HOURS))):
+                ht = h * 1.0 * TO_HOURS + 0.5 * TO_HOURS
+                self.queue.push((ht, 'sib_tracing', None, None, None, None), priority=ht)
 
         # MAIN EVENT LOOP
         t = 0.0
+        print('Main loop starting, population of', self.n_people)
         while self.queue:
 
             # get next event to process
@@ -575,6 +603,7 @@ class DiseaseModel(object):
 
             # check if testing processing
             if event == 'execute_tests':
+                print('\nTesting event at time', t)
                 self.__update_testing_queue(t)
                 continue
 
@@ -589,6 +618,12 @@ class DiseaseModel(object):
                 if self.verbose:
                     print('\n[Simulation ended]')
                 break
+            
+            # check if sib tracing event            
+            if event == 'sib_tracing':
+                print('sib tracing event')
+                self.__process_sib_tracing_event(t)
+                continue
 
             # process event
             if event == 'expo':
@@ -800,7 +835,13 @@ class DiseaseModel(object):
             # print
             self.__print(t, force=True)
 
-
+        
+        print('End main loop')
+        
+        print('Total number of infections:', self.tot_inf_num)
+        print('Infections from contacts', self.inf_num)
+        print('Infections from indirect contacts', self.indir_inf_num)
+        print('Infections from pure indirect contacts', self.full_indir_inf_num)        
 
         # print('% exposed in risk buckets: ', 100.0 * self.risk_got_exposed / (self.risk_got_exposed + self.risk_got_not_exposed))
    
@@ -966,6 +1007,8 @@ class DiseaseModel(object):
         Mark person `i` as exposed at time `t`
         Push asymptomatic or presymptomatic queue event
         """
+        
+        self.tot_inf_num += 1
 
         # track flags
         assert(self.state['susc'][i])
@@ -999,6 +1042,15 @@ class DiseaseModel(object):
 
         # record which contact caused this exposure event (to check if it was traced for TP/FP/TN/FN computation)
         if contact is not None:
+            self.inf_num += 1
+            
+            if contact.t_to_direct < t:
+                assert contact.t_to >= t
+                self.indir_inf_num += 1
+                if contact.t_from > contact.t_to_direct:
+                    assert t >= contact.t_from
+                    self.full_indir_inf_num += 1
+            
             assert(self.contact_caused_expo[i] is None)
             self.contact_caused_expo[i] = contact
 
@@ -1434,7 +1486,8 @@ class DiseaseModel(object):
                      TestResult(is_positive_test=is_positive_test,
                                 trigger_tracing_if_positive=trigger_tracing_if_positive)),
                     priority=t + self.test_reporting_lag)
-                
+        
+        print('Tested ' + str(ctr) + ' individuals')
             
 
     def __process_testing_event(self, t, i, metadata):
@@ -1482,11 +1535,209 @@ class DiseaseModel(object):
         # add timing of positive test for `UpperBoundCases` measures
         if is_positive_test:
             self.t_pos_tests.append(t)
+        
+        # record test result
+        if t in self.all_obs:
+            self.all_obs[t].append([i, is_positive_test, trigger_tracing_if_positive])
+        else:
+            self.all_obs[t] = [[i, is_positive_test, trigger_tracing_if_positive]]
+        
+        # if sib contact tracing is active, isolate positive individuals here
+        if ('isolate' in self.smart_tracing_actions and self.smart_tracing_policy_isolate == 'sib'):
+            self.measure_list.start_containment(SocialDistancingForSmartTracing, t=t, j=i)
+            self.measure_list.start_containment(SocialDistancingForSmartTracingHousehold, t=t, j=i)
+            self.measure_list.start_containment(SocialDistancingSymptomaticAfterSmartTracing, t=t, j=i)
+            self.measure_list.start_containment(SocialDistancingSymptomaticAfterSmartTracingHousehold, t=t, j=i)
+        
+        # do not process contact tracing if sib contact tracing is active
+        sib_contact_tracing = ('isolate' in self.smart_tracing_actions and self.smart_tracing_policy_isolate == 'sib') or \
+                              ('test' in self.smart_tracing_actions and self.smart_tracing_policy_test == 'sib')
 
         # if the individual is tested positive, process contact tracing when active and intended
-        if self.state['posi'][i] and (self.smart_tracing_actions != []) and trigger_tracing_if_positive:
+        if self.state['posi'][i] and (self.smart_tracing_actions != []) and trigger_tracing_if_positive \
+           and (not sib_contact_tracing):
             self.__update_smart_tracing(t, i)
             self.__update_smart_tracing_housholds(t, i)
+    
+    def __process_sib_tracing_event(self, t):
+        # day of the tracing event
+        t_day = int(t // TO_HOURS)
+        
+        print('t, t_day:', t, t_day)
+        
+        # get the time to the last tracing event
+        # !! VALUES STILL HARDCODED !!
+        t_start = t - 1.0 * TO_HOURS
+        
+        # if it's the first event, set the last tracing event time to zero
+        # !! VALUES STILL HARDCODED !!
+        if t_day == 5:
+            t_start = 0
+        
+        # get the new test results
+        new_obs = []
+        
+        times = [th for th in self.all_obs if ((th >=t_start) and (th < t))]
+        
+        for th in times:
+            for test in self.all_obs[th]:
+                # use result only if trigger_tracing is True
+                if test[2]:
+                    # set the time to the test time, discretized
+                    # !! VALUES STILL HARDCODED !!
+                    test_time = th - self.test_reporting_lag
+                    day_temp = int((test_time - 0.5 * TO_HOURS) // TO_HOURS)
+                    
+                    # day 0 is potentially longer than the others
+                    if day_temp < 0:
+                        day_temp = 0
+                    
+                    new_obs.append((test[0], test[1], day_temp))
+        
+        # get new contacts of all the individuals
+        part_contacts = self.__get_valid_contacts_interval(t_start, t)
+        
+        contacts_df = pd.DataFrame(part_contacts, columns = ['i','j','t','deltat'])
+        
+        print('min t_day contacts',contacts_df['t'].min())
+        print('max t_day contacts',contacts_df['t'].max())
+        print('len(contacts_df) before households', len(contacts_df))
+        
+        # add new household contacts
+        housedict = self.mob.households
+        
+        contacts_households = []
+        
+        for house in housedict.keys():
+            people_h = housedict[house]
+            for i in people_h:
+                for j in people_h:
+                    if i!=j:
+                        # if it's the first event, add all the contacts in the previous days
+                        # !! VALUES STILL HARDCODED !!
+                        if t_day == 5:
+                            for t_day_temp in range(0, t_day):
+                                if self.__is_sib_tracing_contact_valid_households(i, j, house, t_day_temp):
+                                    contacts_households += [(i, j, t_day_temp)]
+                        else:
+                            if self.__is_sib_tracing_contact_valid_households(i, j, house, t_day-1):
+                                contacts_households += [(i, j, t_day-1)]
+
+        contacts_households_df = pd.DataFrame(contacts_households,columns = ['i','j','t'])
+        # !! VALUES STILL HARDCODED !!
+        contacts_households_df['deltat'] = 3.0
+        
+        contacts_df = contacts_df.append(contacts_households_df)
+        contacts_df = contacts_df.sort_values(by=['t','i','j'])
+        
+        print('len(contacts_df) after households', len(contacts_df))
+        
+        if len(contacts_df) == 0:
+           raise ValueError('No valid contacts between two tracing events. Probably every individual is isolated. Check the simulation parameters.')
+        
+        # compute lambda
+        t_unit = int(1.0 * TO_HOURS)
+        beta = self.betas_weighted_mean
+        contacts_df['lambda'] = 1 - np.exp(-beta * contacts_df['deltat'].to_numpy() / t_unit)
+        
+        # adjust contacts t_day
+        contacts_df['t'] += 1
+        
+        old_df = contacts_df.loc[contacts_df['t'] != t_day]
+        new_df = contacts_df.loc[contacts_df['t'] == t_day]
+        
+        # old contacts that happened before the last day
+        old_contacts = old_df[['i','j','t','lambda']].to_records(index = False)
+        # contacts that happened on the last day
+        new_contacts = new_df[['i','j','t','lambda']].to_records(index = False)
+        
+        # if it's the first event, add fake observations and old contacts (if sib ranker)
+        # !! VALUES STILL HARDCODED !!
+        if t_day == 5:
+            if hasattr(self.inference_algo, 'f'):
+                print('Adding fake obs and old contacts for first sib tracing event')
+                for day in range(5):
+                    for i in range(self.inference_algo.N):
+                        self.inference_algo.f.append_observation(i, -1, day)
+                    for ct in old_contacts:
+                        if ct[2] == day:
+                            self.inference_algo.f.append_contact(*ct)
+        else:
+            # old_contacts should be empty if it's not the first event
+            if len(old_contacts) != 0:
+                print('t_day:', t_day)
+                for ct in old_contacts:
+                    print(ct)
+                raise ValueError('Not first event but some contacts happened on another day')
+
+        # rank all the individuals
+        rank = self.inference_algo.rank(t_day, new_contacts, new_obs)
+        
+        # sort from highest probability to lowest
+        rank = np.array(sorted(rank, key= lambda tup: tup[1], reverse=True))
+        
+        first_rank = [int(tup[0]) for tup in rank]
+        
+        # exclude from the contact tracing actions the individuals that:
+        # - are hospitalized/dead
+        # - have already tested positive
+        # - are aready in isolation
+        indv_rank = []
+        max_length = np.max([self.smart_tracing_isolated_contacts, self.smart_tracing_tested_contacts])
+        
+        for indv in first_rank:
+            if len(indv_rank) > max_length:
+                break
+            
+            is_dead = self.state['dead'][indv]
+            is_hosp = self.state['hosp'][indv]
+            
+            contained_prob = self.measure_list.is_contained_prob(
+                SocialDistancingForSmartTracing, t=t, j=indv,
+                state_nega_started_at=self.state_started_at['nega'],
+                state_nega_ended_at=self.state_ended_at['nega'])
+            
+            is_tracing_isolated = (contained_prob > 0.0)
+            
+            has_tested_positive = (self.state_started_at['posi'][indv] < t)
+            
+            if is_dead or is_hosp or is_tracing_isolated or has_tested_positive:
+                continue
+            
+            else:
+                indv_rank.append(indv)
+        
+        rank_isolate = indv_rank[:self.smart_tracing_isolated_contacts]
+        rank_test = indv_rank[:self.smart_tracing_tested_contacts]
+        
+        if (len(rank_isolate)!=self.smart_tracing_isolated_contacts) or (len(rank_test)!=self.smart_tracing_tested_contacts):
+            print('Warning: isolating/testing less individuals than expected.')
+        
+        '''Execute contact tracing actions for selected contacts'''
+        if 'isolate' in self.smart_tracing_actions:
+            print('Isolating', len(rank_isolate), 'individuals')
+            
+            for j in rank_isolate:
+                self.measure_list.start_containment(SocialDistancingForSmartTracing, t=t, j=j)
+                self.measure_list.start_containment(SocialDistancingForSmartTracingHousehold, t=t, j=j)
+                self.measure_list.start_containment(SocialDistancingSymptomaticAfterSmartTracing, t=t, j=j)
+                self.measure_list.start_containment(SocialDistancingSymptomaticAfterSmartTracingHousehold, t=t, j=j)
+        
+        # priority = [(1.0 / tup[1]) for tup in rank]
+
+        if 'test' in self.smart_tracing_actions:
+            print('Adding to testing queue', len(rank_test), 'individuals')
+            
+            for j in rank_test:
+                if self.smart_tracing_policy_test == 'sib':
+                    self.__apply_for_testing(t=t, i=j, priority=1.0, 
+                        trigger_tracing_if_positive=self.trigger_tracing_after_posi_trace_test)
+                #elif self.smart_tracing_policy_test == 'advanced_sib':
+                #    self.__apply_for_testing(t=t, i=j, priority=priority[j], 
+                #        trigger_tracing_if_positive=self.trigger_tracing_after_posi_trace_test)
+                else:
+                    raise ValueError('Invalid smart tracing policy.')
+        
     
     def __update_smart_tracing(self, t, i):
         '''
@@ -1697,7 +1948,271 @@ class DiseaseModel(object):
 
                 self.valid_contacts_for_tracing.append((t, infector, contacts))
 
+    def __get_valid_contacts_interval(self, t_start, t_end):
+        # get all contacts that overlap with the interval [t_start, t_end]
+        contacts_raw = [] 
+        for i in range(self.mob.num_people):
+            contacts_raw += list(self.mob.find_contacts_of_indiv(i, tmin=t_start, tmax=t_end, tracing=True).find((t_start, t_end)))
+        
+        print('t_start:', t_start)
+        print('t_end:', t_end)
+        print('len(contacts_raw):', len(contacts_raw))
+        
+        # get valid contacts
+        valid_contacts = []
+        for contact in contacts_raw:            
+            if self.__is_sib_tracing_contact_valid(contact=contact):
+                valid_contacts.append(contact)
+                
+        print('len(valid_contacts):', len(valid_contacts))
+        
+        dt_dict = {}
+        
+        print('Remove assertions if everything works')
+        
+        for h in valid_contacts:
+            # restrict contacts to window [t_start, t_end]
+            t_from = max(t_start, h.t_from)
+            t_to = min(t_end, h.t_to)
+            
+            idxi = h.indiv_i
+            idxj = h.indiv_j
+            
+            # !! VALUES STILL HARDCODED !!
+            day_start = int((t_from - 0.5 * TO_HOURS) // TO_HOURS)
+            day_end = int((t_to - 0.5 * TO_HOURS) // TO_HOURS)
+            
+            t_unit = int(1.0 * TO_HOURS)
+            
+            # day 0 is potentially longer than the others
+            if day_start < 0:
+                day_start = 0
+            
+            if day_end < 0:
+                day_end = 0
+            
+            assert h.duration > 0.0
+            
+            if day_start == day_end:
+                if (idxi, idxj, day_start) in dt_dict:
+                    dt_dict[(idxi, idxj, day_start)] += h.duration
+                else:
+                    dt_dict[(idxi, idxj, day_start)] = h.duration
+            else:
+                # !! VALUES STILL HARDCODED !!
+                dt_initial = (0.5 * t_unit + (day_start + 1) * t_unit) - t_from
+                dt_final = t_to - (0.5 * t_unit + day_end * t_unit)
+                
+                assert dt_initial >= 0.0
+                assert dt_final >= 0.0
+                
+                # debug
+                if (day_end == 0):
+                    raise ValueError('Contact ended on day 0 but starting day is not 0')               
+                if (dt_initial > t_unit and day_start != 0):
+                    raise ValueError('Contact time is more than one day while pooling')
+                if (dt_final > t_unit and day_start != 0):
+                    raise ValueError('Contact time is more than one day while pooling')
+                
+                if dt_initial > 0:
+                    if (idxi, idxj, day_start) in dt_dict:
+                        dt_dict[(idxi, idxj, day_start)] += dt_initial
+                    else:
+                        dt_dict[(idxi, idxj, day_start)] = dt_initial
+                
+                if dt_final > 0:
+                    if (idxi, idxj, day_end) in dt_dict:
+                        dt_dict[(idxi, idxj, day_end)] += dt_final
+                    else:
+                        dt_dict[(idxi, idxj, day_end)] = dt_final
+                
+                if day_end - day_start > 1:
+                    for t in np.arange(day_start+1,day_end,1):
+                        if (idxi, idxj, t) in dt_dict:
+                            dt_dict[(idxi, idxj, t)] += t_unit
+                        else:
+                            dt_dict[(idxi, idxj, t)] = t_unit
+            
+        # filter + asymmetric/missing contacts
+        cont_sqzd_ls = []
+        first_filter = False
+        t_res = 0.0
+        miss = False
+        asym = False
 
+        for (i,j,t) in dt_dict:
+            if first_filter:
+                if dt_dict[(i,j,t)] > t_res:
+                    cont_sqzd_ls.append([i, j, t, dt_dict[(i,j,t)]])
+                    if (j,i,t) not in dt_dict:
+                        miss = True
+                    else:
+                        if dt_dict[(i,j,t)] != dt_dict[(j,i,t)]:
+                            asym = True
+            else:
+                cont_sqzd_ls.append([i, j, t, dt_dict[(i,j,t)]])
+                if (j,i,t) not in dt_dict:
+                    miss = True
+                else:
+                    if dt_dict[(i,j,t)] != dt_dict[(j,i,t)]:
+                        asym = True
+
+        if miss:
+            print('Contact between i and j but no contact between j and i')
+        if asym:
+            print('Asymmetric contacts')
+
+        return cont_sqzd_ls
+        
+    def __is_sib_tracing_contact_valid(self, *, contact):
+        """ 
+        Compute whether a contact is valid
+        """
+        
+        idxi = contact.indiv_i
+        idxj = contact.indiv_j
+        
+        start_contact = contact.t_from
+        end_contact = contact.t_to
+        site_id = contact.site
+        i_visit_id, j_visit_id = contact.id_tup
+        
+        '''Check status of both individuals'''
+        i_has_valid_status = (
+            # not dead
+            (not (self.state['dead'][idxi] and self.state_started_at['dead'][idxi] <= start_contact)) and
+
+            # not hospitalized at time of contact
+            (not (self.state['hosp'][idxi] and self.state_started_at['hosp'][idxi] <= start_contact))
+        )
+
+        j_has_valid_status = (
+            # not dead
+            (not (self.state['dead'][idxj] and self.state_started_at['dead'][idxj] <= start_contact)) and
+
+            # not hospitalized at time of contact
+            (not (self.state['hosp'][idxj] and self.state_started_at['hosp'][idxj] <= start_contact))
+        )
+
+        if (not i_has_valid_status) or (not j_has_valid_status):
+            return False
+        
+        '''Check contact tracing channels'''
+        # check if i is compliant with digital tracing
+        is_i_compliant = self.measure_list.is_compliant(
+            ComplianceForAllMeasure, 
+            # to be consistent with general `is_i_compliant` check outside, don't use `start_contact`
+            t=max(end_contact, 0.0), j=idxi)
+
+        # check if j is compliant with digital tracing
+        is_j_compliant = self.measure_list.is_compliant(
+            ComplianceForAllMeasure,
+            # to be consistent with `is_i_compliant` check, don't use `start_contact`
+            t=max(end_contact, 0.0), j=idxj)
+        
+        # Check if site at which contact happened has a beacon for beacon tracing
+        if self.mob.beacon_config is not None:
+            site_has_beacon = self.mob.site_has_beacon[site_id]
+        else:
+            site_has_beacon = False
+        
+        # Contacts can be identified if one of the following is true:
+        # 1) i and j are compliant with digital tracing (require P2P tracing or location-based tracing with beacon at site)
+        digital_tracable = is_i_compliant and is_j_compliant and ((self.mob.beacon_config is None) or site_has_beacon)
+        
+        contact_tracable = digital_tracable
+        
+        if not contact_tracable:
+            return False
+        
+        '''Check SocialDistancing measures'''
+        is_i_contained = self.is_person_home_from_visit_due_to_measure(
+            t=start_contact, i=idxi, visit_id=i_visit_id, 
+            site_type=self.site_dict[self.site_type[site_id]])
+        is_j_contained = self.is_person_home_from_visit_due_to_measure(
+            t=start_contact, i=idxj, visit_id=j_visit_id, 
+            site_type=self.site_dict[self.site_type[site_id]])
+
+        if is_i_contained or is_j_contained:
+            return False
+
+        # if all of the above checks passed, then contact is valid
+        return True
+    
+    def __is_sib_tracing_contact_valid_households(self, i, j, house, t_day):
+        # start_contact is set to the start time of the day
+        # !! VALUES STILL HARDCODED !!
+        start_contact = t_day * TO_HOURS + 0.5 * TO_HOURS
+        
+        # day 0 is potentially longer
+        if t_day == 0:
+            start_contact = 0
+        
+        '''Check status of both individuals'''
+        i_has_valid_status = (
+            # not dead
+            (not (self.state['dead'][i] and self.state_started_at['dead'][i] <= start_contact)) and
+
+            # not hospitalized at time of contact
+            (not (self.state['hosp'][i] and self.state_started_at['hosp'][i] <= start_contact))
+        )
+
+        j_has_valid_status = (
+            # not dead
+            (not (self.state['dead'][j] and self.state_started_at['dead'][j] <= start_contact)) and
+
+            # not hospitalized at time of contact
+            (not (self.state['hosp'][j] and self.state_started_at['hosp'][j] <= start_contact))
+        )
+        
+        if (not i_has_valid_status) or (not j_has_valid_status):
+            return False
+        
+        '''Check SocialDistancing measures'''
+        is_i_home_isolated = (
+            self.measure_list.is_contained(
+                SocialDistancingForPositiveMeasureHousehold, t=start_contact, j=i,  
+                state_posi_started_at=self.state_started_at['posi'],
+                state_posi_ended_at=self.state_ended_at['posi'],
+                state_resi_started_at=self.state_started_at['resi'],
+                state_dead_started_at=self.state_started_at['dead']) or 
+            self.measure_list.is_contained(
+                SocialDistancingForSmartTracingHousehold, t=start_contact, j=i,
+                state_nega_started_at=self.state_started_at['nega'],
+                state_nega_ended_at=self.state_ended_at['nega']) or
+            self.measure_list.is_contained(
+                SocialDistancingSymptomaticAfterSmartTracingHousehold, t=start_contact, j=i,
+                state_isym_started_at=self.state_started_at['isym'],
+                state_isym_ended_at=self.state_ended_at['isym'],
+                state_nega_started_at=self.state_started_at['nega'],
+                state_nega_ended_at=self.state_ended_at['nega'])
+        )
+        
+        is_j_home_isolated = (
+            self.measure_list.is_contained(
+                SocialDistancingForPositiveMeasureHousehold, t=start_contact, j=j,  
+                state_posi_started_at=self.state_started_at['posi'],
+                state_posi_ended_at=self.state_ended_at['posi'],
+                state_resi_started_at=self.state_started_at['resi'],
+                state_dead_started_at=self.state_started_at['dead']) or 
+            self.measure_list.is_contained(
+                SocialDistancingForSmartTracingHousehold, t=start_contact, j=j,
+                state_nega_started_at=self.state_started_at['nega'],
+                state_nega_ended_at=self.state_ended_at['nega']) or
+            self.measure_list.is_contained(
+                SocialDistancingSymptomaticAfterSmartTracingHousehold, t=start_contact, j=j,
+                state_isym_started_at=self.state_started_at['isym'],
+                state_isym_ended_at=self.state_ended_at['isym'],
+                state_nega_started_at=self.state_started_at['nega'],
+                state_nega_ended_at=self.state_ended_at['nega'])
+        )
+        
+        if is_i_home_isolated or is_j_home_isolated:
+            return False
+        
+        # if all of the above checks passed, then contact is valid
+        return True
+        
     def __is_tracing_contact_valid(self, *, t, i, contact):
         """ 
         Compute whether a contact of individual i at time t is valid
