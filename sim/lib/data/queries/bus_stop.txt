@@ -1,1 +1,0 @@
-node["highway"="bus_stop"]

@@ -1,4 +1,0 @@
-way["shop"="supermarket"]
-node["shop"="supermarket"]
-way["shop"="convenience"]
-node["shop"="convenience"]
