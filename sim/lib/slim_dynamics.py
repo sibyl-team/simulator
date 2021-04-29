@@ -479,6 +479,8 @@ class DiseaseModel(object):
 
             # check termination
             if t > max_time:
+                self.queue.push((t, event, i, infector, k, metadata), priority=t)
+                
                 t = max_time
                 self.t0 = max_time
                 self.__print(t, force=True)
