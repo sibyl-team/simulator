@@ -602,7 +602,7 @@ class DiseaseModel(object):
                         else:
                             base_rate_infector = 1.0
                             tmax = (self.state_started_at['ipre'][infector] + self.delta_ipre_to_isym[infector] +
-                                self.delta_isym_to_dead[infector] if self.bernoulli_is_fatal[infector] else self.delta_isym_to_resi[infector])
+                                (self.delta_isym_to_dead[infector] if self.bernoulli_is_fatal[infector] else self.delta_isym_to_resi[infector]))
 
                         # sample exposure at later point
                         if t < tmax:
@@ -667,7 +667,7 @@ class DiseaseModel(object):
                         else:
                             base_rate_infector = 1.0
                             tmax = (self.state_started_at['ipre'][infector] + self.delta_ipre_to_isym[infector] +
-                                    self.delta_isym_to_dead[infector] if self.bernoulli_is_fatal[infector] else self.delta_isym_to_resi[infector])
+                                    (self.delta_isym_to_dead[infector] if self.bernoulli_is_fatal[infector] else self.delta_isym_to_resi[infector]))
 
                         # sample exposure at later point
                         if t < tmax:
@@ -937,8 +937,7 @@ class DiseaseModel(object):
 
             # find tmax for efficiency reasons (based on when individual i will not be infectious anymore)
             tmax = (t + self.delta_ipre_to_isym[i] +
-                self.delta_isym_to_dead[i] if self.bernoulli_is_fatal[i] else
-                self.delta_isym_to_resi[i])
+                (self.delta_isym_to_dead[i] if self.bernoulli_is_fatal[i] else self.delta_isym_to_resi[i]))
 
             if not i_excluded:
                 #print("entered i_excluded in process_presym")
