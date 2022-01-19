@@ -38,9 +38,10 @@ class DiseaseModel(object):
             object of class MobilitySimulator providing mobility data
 
         """
+        self.rngstate = mob.rngstate
+        np.random.set_state(self.rngstate)
         ## SLIM
         self.t0 = 0
-
         # cache settings
         self.mob = mob
         self.d = distributions
@@ -81,7 +82,7 @@ class DiseaseModel(object):
             '{maxt:.2f} hrs '
             '({maxd:.0f} d)'
             )
-
+        self.rngstate = np.random.get_state()
     def __print(self, t, force=False):
         if ((time.time() - self.last_print > self._PRINT_INTERVAL) or force) and self.verbose:
             print('\r', self._PRINT_MSG.format(t=t, maxt=self.max_time, maxd=self.max_time / 24),
@@ -391,7 +392,7 @@ class DiseaseModel(object):
         # SLIM
         self.t0 = 0
 
-
+        np.random.set_state(self.rngstate)
         self.verbose = verbose
         self.thresholds_roc = thresholds_roc
 
@@ -464,15 +465,15 @@ class DiseaseModel(object):
                     self.queue.push(
                         (delta_susc_to_expo[i], 'expo', i, None, None, None),
                         priority=delta_susc_to_expo[i])
-
+        self.rngstate = np.random.get_state()
 
 
     def run_one_step_dyn(self, max_time, excluded):
 
         # MAIN EVENT LOOP
         #t = self.t0
+        np.random.set_state(self.rngstate)
         while self.queue:
-            
             # get next event to process
             t, event, i, infector, k, metadata = self.queue.pop()
             #print(event, i, t)
@@ -480,7 +481,6 @@ class DiseaseModel(object):
             # check termination
             if t > max_time:
                 self.queue.push((t, event, i, infector, k, metadata), priority=t)
-                
                 t = max_time
                 self.t0 = max_time
                 self.__print(t, force=True)
@@ -730,6 +730,7 @@ class DiseaseModel(object):
             # ))
 
         '''
+        self.rngstate = np.random.get_state()
         # free memory
         self.valid_contacts_for_tracing = None
         #self.queue = None

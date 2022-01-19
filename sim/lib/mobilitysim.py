@@ -454,10 +454,10 @@ class MobilitySimulator:
             self.site_dict = site_dict
         self.delta = delta
         self.verbose = verbose
-
         self.beacon_config = beacon_config
         self.site_has_beacon = self.place_beacons(
             beacon_config=beacon_config, rollouts=10, max_time=28 * TO_HOURS)
+        self.rngstate = np.random.get_state()
 
     '''Beacon information computed at test time'''
 
@@ -596,6 +596,7 @@ class MobilitySimulator:
         Return
         ------
         sim : MobilitySimulator
+            print(seeds_)
             The loaded object
         """
         with open(path, 'rb') as fp:
@@ -790,6 +791,7 @@ class MobilitySimulator:
             - `time_start` is the time the contact started
             - 'indiv_j' is the id of the individual the contact was with
             - 'duration' is the duration of the contact
+        
         """
         self.max_time = max_time
 
@@ -806,6 +808,7 @@ class MobilitySimulator:
 
         # Initialize empty contact array
         self.contacts = {i: defaultdict(InterLap) for i in range(self.num_people)}
+        self.rngstate = np.random.get_state()
 
     def list_intervals_in_window_individual_at_site(self, *, indiv, site, t0, t1):
         """Return a generator of Intervals of all visits of `indiv` is at site
