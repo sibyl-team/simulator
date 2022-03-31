@@ -42,6 +42,7 @@ class DiseaseModel(object):
         np.random.set_state(self.rngstate)
         ## SLIM
         self.t0 = 0
+        self.transm = [] # vector of tuples
         # cache settings
         self.mob = mob
         self.d = distributions
@@ -472,6 +473,7 @@ class DiseaseModel(object):
 
         # MAIN EVENT LOOP
         #t = self.t0
+        self.transm = []
         np.random.set_state(self.rngstate)
         while self.queue:
             # get next event to process
@@ -590,7 +592,6 @@ class DiseaseModel(object):
                         (not away_from_home):
 
                         self.__process_exposure_event(t=t, i=i, parent=infector, contact=None)
-
                     # if 2), 3), or 4) were true, i.e. infector not recovered,
                     # a household exposure could happen at a later point, hence sample a new event
                     if (infector_hospitalized or away_from_home):
@@ -654,7 +655,6 @@ class DiseaseModel(object):
                         (not site_avoided_infection):
 
                         self.__process_exposure_event(t=t, i=i, parent=infector, contact=contact)
-
                     # if any of 2), 3), 4) were true, i.e. infector not recovered,
                     # an exposure could happen at a later point, hence sample a new event
                     if (infector_contained or i_contained or site_avoided_infection):
@@ -1166,6 +1166,7 @@ class DiseaseModel(object):
                     (tau, 'expo', j, infector, site,
                     sampled_at_contact), # meta info: contact causing infection
                     priority=tau)
+                self.transm.append([tau, infector, j])
                 sampled_event = True
 
         # DEBUG
