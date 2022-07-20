@@ -887,6 +887,7 @@ class DiseaseModel(object):
         self.state_ended_at['susc'][i] = t
         self.state_started_at['expo'][i] = t
         if parent is not None:
+            self.transm.append([t, parent, i])
             self.parent[i] = parent
             if self.state['iasy'][parent]:
                 self.children_count_iasy[parent] += 1
@@ -897,7 +898,7 @@ class DiseaseModel(object):
             else:
                 assert False, 'only infectous parents can expose person i'
 
-
+        
         # decide whether asymptomatic or (pre-)symptomatic
         if self.bernoulli_is_iasy[i]:
             if t + self.delta_expo_to_iasy[i] < self.max_time:
@@ -1223,6 +1224,7 @@ class DiseaseModel(object):
         # site = -1 means it is a household infection
         # thinning is done at exposure time if needed
         if tau < min(tmax, self.max_time):
+            self.transm.append([tau, infector, j])
             self.queue.push((tau, 'expo', j, infector, -1, None), priority=tau)
 
 
