@@ -61,7 +61,9 @@ class CovidDistributions(object):
         # self.real_site_halflife_factor = 1.0  # 10-times shorter halflife at real sites
 
         self.lab_aerosol_halflife = 1.1 # hours
-        self.real_site_halflife_factor = 0.1 # 10-times shorter halflife at real sites 
+        ############## SLIM
+        self.real_site_halflife_factor = 0.1 # 100 times shorter polito #DEFAULT 0.1, 10-times shorter halflife at real sites 
+        ###################
         self.real_site_aerosol_halflife = self.lab_aerosol_halflife * self.real_site_halflife_factor
 
         # 6.301338005090411
@@ -70,8 +72,8 @@ class CovidDistributions(object):
         # 0.3654120904376099
         #self.delta = np.log(1 / 0.10) / self.gamma # time of intensity decrease to below 10 %
         #self.delta = 0.0
-        self.delta = np.log(1 / 0.20) / self.gamma 
-        
+        self.delta = np.log(1 / 0.10) / self.gamma 
+        print(self.delta)
        
         # Incubation period: estimated mean is 5.52 days, std dev is 2.41 days
         # To be able to approx. represent latent and infectious incubation period separately,
